@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const app = express();
 
 // ================= SECURITY MIDDLEWARES =================
+app.set('trust proxy', 1); // ← قبل أي middleware
 app.use(helmet()); 
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5000' }));
 //app.use(cors({ origin: '*' })); 
