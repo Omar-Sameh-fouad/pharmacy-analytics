@@ -6,9 +6,7 @@ const { verifyToken, authorizeRoles } = require('../middlewares/verifyToken');
 const { validateRequest, schemas } = require('../middlewares/validator');
 const axios = require('axios');
 
-// =================== Task 3: Paginated Medicine List ===================
-// FIX: Added offset/limit pagination via ?page=&limit= query params (default limit 50).
-// Returns total count alongside data so the frontend can build pagination controls.
+
 router.get('/', verifyToken, authorizeRoles('admin', 'pharmacist'), async (req, res) => {
   try {
     const limit  = Math.max(1, parseInt(req.query.limit, 10) || 50);
@@ -42,7 +40,7 @@ router.get('/', verifyToken, authorizeRoles('admin', 'pharmacist'), async (req, 
   }
 });
 
-// البحث بالباركود (عشان جهاز الباركود في شاشة البيع)
+// البحث بالباركود 
 router.get('/search/:barcode', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashier'), async (req, res) => {
   try {
     const [medicine] = await pool.query('SELECT * FROM Medicine WHERE barcode = ?', [req.params.barcode]);
@@ -80,7 +78,7 @@ router.post('/', verifyToken, authorizeRoles('admin', 'pharmacist'), validateReq
   }
 });
 
-// تعديل دواء موجود (ديناميكي لجميع الحقول)
+// تعديل دواء موجود)
 router.put('/:id', verifyToken, authorizeRoles('admin', 'pharmacist'), async (req, res) => {
   try {
     const {
@@ -141,8 +139,6 @@ router.delete('/:id', verifyToken, authorizeRoles('admin', 'pharmacist'), async 
   }
 });
 
-// =================== Task 4: Axios Timeout on Generic Suggestions ===================
-// Timeout errors are caught separately and return a descriptive Arabic message.
 router.get('/generic-suggestions', verifyToken, authorizeRoles('admin', 'pharmacist'), async (req, res) => {
   try {
     const { term } = req.query;

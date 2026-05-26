@@ -11,9 +11,7 @@ const multer = require('multer');
 const os = require('os');
 const upload = multer({ dest: os.tmpdir() });
 
-// =================== Task 1: Optimized Notifications ===================
-// FIX: Replaced full-table JS forEach with a targeted SQL query that only
-// fetches medicines with low stock OR near/past expiry. No full table scan in RAM.
+
 router.get('/notifications', verifyToken, authorizeRoles('admin', 'pharmacist'), async (req, res) => {
   try {
     const [medicines] = await pool.query(`
@@ -164,9 +162,6 @@ router.post('/logs', verifyToken, authorizeRoles('admin'), async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'حدث خطأ' }); }
 });
 
-// =================== Task 3: Paginated Logs with ORDER BY ===================
-// FIX: Added offset/limit pagination via ?page=&limit= query params (default limit 50).
-// Restored ORDER BY timestamp DESC. Returns total count for frontend pagination controls.
 router.get('/logs', verifyToken, authorizeRoles('admin'), async (req, res) => {
   try {
     const limit = Math.max(1, parseInt(req.query.limit, 10) || 50);
@@ -195,9 +190,7 @@ router.get('/logs', verifyToken, authorizeRoles('admin'), async (req, res) => {
 });
 
 
-// =================== Ultimate Safe Backup (No external tools needed) ===================
-// FIX: Completely bypasses OS commands and buggy NPM packages.
-// Uses the existing verified DB pool to generate a full SQL dump manually.
+
 router.get('/backup', verifyToken, authorizeRoles('admin'), async (req, res) => {
   try {
     // قائمة الجداول في قاعدة البيانات الخاصة بك
@@ -251,7 +244,7 @@ router.get('/backup', verifyToken, authorizeRoles('admin'), async (req, res) => 
 
     sqlDump += `SET FOREIGN_KEY_CHECKS=1;\n`; // إعادة تفعيل الروابط
 
-    // إرسال الملف مباشرة كـ Stream بدون تخزينه على السيرفر
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const filename = `careplus_backup_${timestamp}.sql`;
 
@@ -266,7 +259,7 @@ router.get('/backup', verifyToken, authorizeRoles('admin'), async (req, res) => 
 });   
 
 // =================== Restore Database ===================
-// Requires 'multipleStatements: true' in config/db.js
+
 router.post('/restore', verifyToken, authorizeRoles('admin'), upload.single('backup'), async (req, res) => {
   try {
     if (!req.file) {

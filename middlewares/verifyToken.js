@@ -16,7 +16,7 @@ const verifyToken = (req, res, next) => {
 const authorizeRoles = (...allowedRoles) => {
   return (req, res, next) => {
     if (!allowedRoles.includes(req.user.role)) {
-      return res.status(403).json({ error: 'غير مسموح لدورك بالقيام بهذا الإجراء' });
+       return res.status(403).json({ error: 'غير مسموح لدورك بالقيام بهذا الإجراء' });
     }
     next();
   };

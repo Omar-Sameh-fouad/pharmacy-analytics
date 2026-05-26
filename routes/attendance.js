@@ -4,11 +4,9 @@ const { v4: uuidv4 } = require('uuid');
 const pool = require('../config/db');
 const { verifyToken, authorizeRoles } = require('../middlewares/verifyToken');
 
-// =================== FIX (Logic) ===================
-// تم إضافة فحص لمنع تسجيل check-in مرتين في نفس اليوم.
 router.post('/check-in', verifyToken, authorizeRoles('admin', 'delivery', 'pharmacist', 'cashier'), async (req, res) => {
   try {
-    // فحص: هل يوجد check-in لهذا الموظف في نفس اليوم؟
+    
     const [existing] = await pool.query(
       `SELECT id FROM Attendance WHERE userId = ? AND actionType = 'check-in' AND DATE(timestamp) = CURDATE()`,
       [req.user.id]
@@ -26,11 +24,9 @@ router.post('/check-in', verifyToken, authorizeRoles('admin', 'delivery', 'pharm
   }
 });
 
-// =================== FIX (Logic) ===================
-// تم إضافة فحص لمنع تسجيل check-out مرتين في نفس اليوم.
 router.post('/check-out', verifyToken, authorizeRoles('admin', 'delivery', 'pharmacist', 'cashier'), async (req, res) => {
   try {
-    // فحص: هل يوجد check-out لهذا الموظف في نفس اليوم؟
+    
     const [existing] = await pool.query(
       `SELECT id FROM Attendance WHERE userId = ? AND actionType = 'check-out' AND DATE(timestamp) = CURDATE()`,
       [req.user.id]
@@ -39,7 +35,7 @@ router.post('/check-out', verifyToken, authorizeRoles('admin', 'delivery', 'phar
       return res.status(400).json({ error: 'تم تسجيل انصرافك مسبقاً لهذا اليوم' });
     }
 
-    // فحص: لا يمكن check-out بدون check-in أولاً
+    
     const [checkIn] = await pool.query(
       `SELECT id FROM Attendance WHERE userId = ? AND actionType = 'check-in' AND DATE(timestamp) = CURDATE()`,
       [req.user.id]
@@ -57,8 +53,8 @@ router.post('/check-out', verifyToken, authorizeRoles('admin', 'delivery', 'phar
   }
 });
 
-// =================== FIX (Logic) ===================
-// كان يفلتر بـ MONTH فقط بدون السنة — أصلحنا بإضافة YEAR للفلتر.
+
+
 router.get('/report/:userId', verifyToken, authorizeRoles('admin'), async (req, res) => {
   try {
     const { userId } = req.params;

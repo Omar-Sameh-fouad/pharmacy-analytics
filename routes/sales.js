@@ -5,7 +5,7 @@ const pool = require('../config/db');
 const { verifyToken, authorizeRoles } = require('../middlewares/verifyToken');
 const { validateRequest, schemas } = require('../middlewares/validator');
 
-// ================= Helpers =================
+
 // دالة لحساب الكمية الدقيقة المخصومة أو المضافة بناءً على نوع العبوة
 const calculateFractionalQty = (qty, type, stripCount, pillCount) => {
   if (type === 'box') return parseFloat(qty);
@@ -37,14 +37,14 @@ router.post('/', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashier'), 
     let totalCost = 0;
     let totalProfit = 0;
 
-    // تسجيل الفاتورة الأساسية بقيم مبدئية صفر لتفادي خطأ Foreign Key
+
     await connection.query(
       `INSERT INTO Sale (id, total, cost, profit, paymentMethod, cashierName, cashierId) VALUES (?, 0, 0, 0, ?, ?, ?)`,
       [saleId, paymentMethod, cashierName, cashierId]
     );
 
     for (let item of items) {
-      // جلب بيانات الدواء وعمل Lock لمنع تداخل العمليات
+  
       const [medRows] = await connection.query(
         `SELECT * FROM Medicine WHERE id = ? FOR UPDATE`, 
         [item.medicineId]
@@ -110,7 +110,7 @@ router.post('/', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashier'), 
   }
 });
 
-// ================= 2. عملية المرتجع (تعديل اللوجيك بالكامل حسب طلبك) =================
+// ================= 2. عملية المرتجع  =================
 router.post('/return', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashier'), validateRequest(schemas.returnSale), async (req, res) => {
   const connection = await pool.getConnection();
   try {
@@ -148,10 +148,10 @@ router.post('/return', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashi
       if (medRows.length === 0) throw new Error(`الدواء لم يعد موجوداً في النظام`);
       const medicine = medRows[0];
 
-      // 3. حساب الكمية الدقيقة لإعادتها لجدول الأدوية (تتحول لكسور العلبة بشكل صحيح)
+      // 3. حساب الكمية الدقيقة لإعادتها لجدول الأدوية 
       const stockAddition = calculateFractionalQty(item.qtyToReturn, originalItem.quantityType, medicine.stripCount, medicine.pillCount);
 
-      // 4. زيادة رصيد الدواء في جدول الأدوية (تم حل مشكلة عدم الزيادة)
+      // 4. إضافة الكمية المستردة إلى المخزون في جدول Medicine
       await connection.query(
         `UPDATE Medicine SET quantity = quantity + ? WHERE id = ?`,
         [stockAddition, originalItem.medicineId]
@@ -166,7 +166,7 @@ router.post('/return', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashi
       totalCostRefund += itemTotalCost;
       totalProfitRefund += itemProfit;
 
-      // 6. التعامل مع جدول SaleItem (تتتشال أو تتعدل الكمية)
+      // 6. التعامل مع جدول SaleItem 
       if (item.qtyToReturn === originalItem.qty) {
         // إذا رجع الكمية كاملة، يتم حذف السطر تماماً من جدول SaleItem
         await connection.query(`DELETE FROM SaleItem WHERE id = ?`, [item.saleItemId]);

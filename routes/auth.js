@@ -36,8 +36,6 @@ router.post('/login', loginLimiter, validateRequest(schemas.login), async (req, 
     res.status(500).json({ error: 'حدث خطأ داخلي في الخادم' });
   }
 });
-
-// تم إزالة تعقيد الـ setupKey وإضافة active و dailyHours لضمان نجاح الـ Login
 router.post('/create-first-admin', async (req, res) => {
   try {
     // منع إنشاء أدمن إذا كان يوجد أدمن بالفعل
@@ -45,9 +43,7 @@ router.post('/create-first-admin', async (req, res) => {
     if (existing.length > 0) {
       return res.status(400).json({ error: 'يوجد أدمن بالفعل، يرجى تسجيل الدخول.' });
     }
-
     const hashedPassword = await bcrypt.hash('123456', 10);
-    // تم التعديل هنا ليتوافق مع الداتا بيز (active, dailyHours, expectedDays)
     const sql = `INSERT INTO User (id, username, fullName, email, phone, role, password, active, dailyHours, expectedDays) VALUES (UUID(), 'admin_user', 'المدير العام', 'admin@careplus.com', '01000000000', 'admin', ?, 1, 8, 24)`;
     await pool.query(sql, [hashedPassword]);
     
