@@ -59,6 +59,8 @@ const schemas = {
 
   sale: Joi.object({
     paymentMethod: Joi.string().valid('cash', 'card', 'wallet', 'insurance').required(),
+    // ✅ FIX: أضفنا forceInteraction عشان Joi ما يرفضهاش
+    forceInteraction: Joi.boolean().optional().default(false),
     items: Joi.array().items(
       Joi.object({
         medicineId: Joi.string().required(),

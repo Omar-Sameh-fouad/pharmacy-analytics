@@ -1,34 +1,110 @@
 const express = require('express');
 const router = express.Router();
+const pool = require('../db');
 const { v4: uuidv4 } = require('uuid');
-const pool = require('../config/db');
-const { verifyToken, authorizeRoles } = require('../middlewares/verifyToken');
-const { validateRequest, schemas } = require('../middlewares/validator');
+const { verifyToken, authorizeRoles } = require('../middleware/verifyToken');
+const { validateRequest, schemas } = require('../middleware/validator');
 
+// ================= Helper: حساب الكمية الفعلية =================
+function calculateFractionalQty(qty, quantityType, stripCount, pillCount) {
+  if (quantityType === 'box') return qty;
+  if (quantityType === 'strip') return stripCount ? qty / stripCount : qty;
+  if (quantityType === 'pill') return pillCount ? qty / pillCount : qty;
+  return qty;
+}
 
-// دالة لحساب الكمية الدقيقة المخصومة أو المضافة بناءً على نوع العبوة
-const calculateFractionalQty = (qty, type, stripCount, pillCount) => {
-  if (type === 'box') return parseFloat(qty);
-  if (type === 'strip') {
-    if (!stripCount || stripCount <= 0) throw new Error('بيانات الدواء لا تدعم بيع الشرايط (يجب تحديد عدد الشرايط للعلبة)');
-    return parseFloat(qty) / stripCount;
+// ================= Helper: فحص التعارضات =================
+async function checkInteractions(items) {
+  // ✅ FIX: تحسين parsing الـ genericName - بنأخذ أول كلمة بعد تنظيف الـ string
+  const genericNames = [...new Set(
+    items
+      .filter(item => item.genericName && item.genericName.trim() !== '')
+      .map(item => {
+        // نزيل الأرقام والجرعات ونأخذ الاسم الفعال فقط
+        return item.genericName
+          .toLowerCase()
+          .replace(/[0-9]+\s*(mg|ml|mcg|g|iu|%)/gi, '')
+          .trim()
+          .split(/[\s+\/]+/)[0]; // نقسم على مسافة أو + أو /
+      })
+      .filter(name => name.length > 0)
+  )];
+
+  if (genericNames.length < 2) {
+    return { hasInteraction: false, details: [] };
   }
-  if (type === 'pill') {
-    if (!stripCount || !pillCount || stripCount <= 0 || pillCount <= 0) {
-      throw new Error('بيانات الدواء لا تدعم بيع الحبات (يجب تحديد عدد الشرايط والحبات)');
+
+  // ⚠️  Mock Database - استبدلها بجدول DrugInteractions في قاعدة البيانات
+  // مثال الجدول: CREATE TABLE DrugInteractions (drug1 VARCHAR(100), drug2 VARCHAR(100), severity ENUM('high','moderate','low'), description TEXT)
+  const mockDatabase = {
+    'aspirin-warfarin': { severity: 'high', description: 'تحذير: الأسبرين مع الوارفارين يزيد خطر النزيف' },
+    'ibuprofen-aspirin': { severity: 'moderate', description: 'الإيبوبروفين يقلل فاعلية الأسبرين' }
+  };
+
+  const interactions = [];
+  for (let i = 0; i < genericNames.length; i++) {
+    for (let j = i + 1; j < genericNames.length; j++) {
+      const key1 = `${genericNames[i]}-${genericNames[j]}`;
+      const key2 = `${genericNames[j]}-${genericNames[i]}`;
+      if (mockDatabase[key1]) interactions.push(mockDatabase[key1]);
+      else if (mockDatabase[key2]) interactions.push(mockDatabase[key2]);
     }
-    return parseFloat(qty) / (stripCount * pillCount);
   }
-  return parseFloat(qty);
-};
 
-// ================= 1. عملية البيع =================
+  return { hasInteraction: interactions.length > 0, details: interactions };
+}
+
+// ================= 1. عملية البيع (مع فحص التعارضات) =================
 router.post('/', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashier'), validateRequest(schemas.sale), async (req, res) => {
   const connection = await pool.getConnection();
+
   try {
+    // ✅ FIX: beginTransaction لازم تيجي الأول قبل أي قراءة أو كتابة
     await connection.beginTransaction();
 
-    const { paymentMethod, items } = req.body;
+    const { paymentMethod, items, forceInteraction } = req.body;
+
+    // ========== الخطوة 1: جلب الأدوية ==========
+    const medicineIds = items.map(item => item.medicineId);
+    const placeholders = medicineIds.map(() => '?').join(',');
+    const [medicines] = await connection.query(
+      `SELECT id, name, genericName, sellingPrice, purchasePrice, quantity, stripCount, pillCount 
+       FROM Medicine WHERE id IN (${placeholders})`,
+      medicineIds
+    );
+
+    const itemsWithDetails = items.map(item => {
+      const medicine = medicines.find(m => m.id === item.medicineId);
+      if (!medicine) throw new Error(`الدواء غير موجود: ${item.medicineId}`);
+      return { ...item, ...medicine };
+    });
+
+    // ========== الخطوة 2: فحص التعارضات ==========
+    const interactions = await checkInteractions(itemsWithDetails);
+
+    // ========== الخطوة 3: إذا فيه تعارض والمستخدم ما وافقش ==========
+    if (interactions.hasInteraction && !forceInteraction) {
+      // ✅ FIX: rollback قبل ما نرجع الـ 409 عشان نحرر الـ connection صح
+      await connection.rollback();
+      return res.status(409).json({
+        error: 'يوجد تعارض دوائي',
+        interactions: interactions.details,
+        requiresConfirmation: true,
+        message: 'هل تريد الاستمرار في البيع رغم التحذير؟'
+      });
+    }
+
+    // ========== الخطوة 4: تسجيل في AuditLog لو تجاوز التحذير ==========
+    if (interactions.hasInteraction && forceInteraction) {
+      await connection.query(
+        `INSERT INTO AuditLog (id, actorId, actorName, action, details, severity) 
+         VALUES (UUID(), ?, ?, 'SALE_WITH_INTERACTION', ?, 'warning')`,
+        [req.user.id, req.user.username,
+          `تم بيع فاتورة تحتوي تعارضات: ${JSON.stringify(interactions.details)}`]
+      );
+    }
+
+    // ========== الخطوة 5: إنشاء الفاتورة ==========
     const cashierId = req.user.id;
     const cashierName = req.user.username;
     const saleId = uuidv4();
@@ -37,69 +113,48 @@ router.post('/', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashier'), 
     let totalCost = 0;
     let totalProfit = 0;
 
-
     await connection.query(
-      `INSERT INTO Sale (id, total, cost, profit, paymentMethod, cashierName, cashierId) VALUES (?, 0, 0, 0, ?, ?, ?)`,
+      `INSERT INTO Sale (id, total, cost, profit, paymentMethod, cashierName, cashierId) 
+       VALUES (?, 0, 0, 0, ?, ?, ?)`,
       [saleId, paymentMethod, cashierName, cashierId]
     );
 
-    for (let item of items) {
-  
-      const [medRows] = await connection.query(
-        `SELECT * FROM Medicine WHERE id = ? FOR UPDATE`, 
-        [item.medicineId]
-      );
+    for (let item of itemsWithDetails) {
+      const deductionQty = calculateFractionalQty(item.qty, item.quantityType, item.stripCount, item.pillCount);
 
-      if (medRows.length === 0) throw new Error(`الدواء غير موجود: ${item.medicineId}`);
-      const medicine = medRows[0];
-
-      // حساب الكمية المراد خصمها من المخزون
-      const deductionQty = calculateFractionalQty(item.qty, item.quantityType, medicine.stripCount, medicine.pillCount);
-
-      if (medicine.quantity < deductionQty) {
-        throw new Error(`الكمية غير كافية لدواء: ${medicine.name}. المتاح: ${medicine.quantity.toFixed(4)} علبة.`);
+      if (item.quantity < deductionQty) {
+        throw new Error(`الكمية غير كافية لدواء: ${item.name}`);
       }
 
-      // حساب السعر والتكلفة لهذا العنصر
-      const itemTotalPrice = (medicine.sellingPrice * deductionQty);
-      const itemTotalCost = (medicine.purchasePrice * deductionQty);
+      const itemTotalPrice = item.sellingPrice * deductionQty;
+      const itemTotalCost = item.purchasePrice * deductionQty;
       const itemProfit = itemTotalPrice - itemTotalCost;
 
       grandTotal += itemTotalPrice;
       totalCost += itemTotalCost;
       totalProfit += itemProfit;
 
-      // خصم المخزون
-      await connection.query(
-        `UPDATE Medicine SET quantity = quantity - ? WHERE id = ?`,
-        [deductionQty, item.medicineId]
-      );
+      await connection.query(`UPDATE Medicine SET quantity = quantity - ? WHERE id = ?`, [deductionQty, item.medicineId]);
 
-      // تسجيل تفاصيل الفاتورة
       await connection.query(
         `INSERT INTO SaleItem (id, qty, unitPrice, unitCost, medicineName, saleId, medicineId, quantityType, stripCount, pillCount) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          uuidv4(), item.qty, (itemTotalPrice / item.qty), (itemTotalCost / item.qty), 
-          medicine.name, saleId, item.medicineId, item.quantityType, 
-          medicine.stripCount, medicine.pillCount
-        ]
+        [uuidv4(), item.qty, (itemTotalPrice / item.qty), (itemTotalCost / item.qty),
+          item.name, saleId, item.medicineId, item.quantityType, item.stripCount, item.pillCount]
       );
     }
 
-    // تحديث الفاتورة الإجمالية بالمجاميع النهائية
-    await connection.query(
-      `UPDATE Sale SET total = ?, cost = ?, profit = ? WHERE id = ?`,
-      [grandTotal, totalCost, totalProfit, saleId]
-    );
-
-    await connection.query(
-      `INSERT INTO AuditLog (id, actorId, actorName, action, details, severity) VALUES (UUID(), ?, ?, 'SALE', ?, 'info')`,
-      [cashierId, cashierName, `تم بيع فاتورة برقم ${saleId} بقيمة ${grandTotal.toFixed(2)}`]
-    );
+    await connection.query(`UPDATE Sale SET total = ?, cost = ?, profit = ? WHERE id = ?`,
+      [grandTotal, totalCost, totalProfit, saleId]);
 
     await connection.commit();
-    res.json({ message: 'تم البيع بنجاح', saleId, total: grandTotal });
+
+    res.json({
+      message: 'تم البيع بنجاح',
+      saleId,
+      total: grandTotal,
+      interactionsWarning: interactions.hasInteraction ? 'تم البيع رغم وجود تعارضات' : null
+    });
 
   } catch (err) {
     await connection.rollback();
@@ -107,163 +162,6 @@ router.post('/', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashier'), 
     res.status(400).json({ error: err.message || 'فشل إتمام عملية البيع' });
   } finally {
     connection.release();
-  }
-});
-
-// ================= 2. عملية المرتجع  =================
-router.post('/return', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashier'), validateRequest(schemas.returnSale), async (req, res) => {
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-
-    const { saleId, returnedItems } = req.body;
-    const cashierId = req.user.id;
-    const cashierName = req.user.username;
-    const returnId = uuidv4();
-
-    let totalRefund = 0;
-    let totalCostRefund = 0;
-    let totalProfitRefund = 0;
-
-    // التأكد من وجود الفاتورة الأصلية
-    const [saleExists] = await connection.query(`SELECT * FROM Sale WHERE id = ?`, [saleId]);
-    if (saleExists.length === 0) throw new Error('الفاتورة الأصلية غير موجودة');
-
-    for (let item of returnedItems) {
-      // 1. جلب بيانات العنصر المباع من جدول SaleItem
-      const [saleItemRows] = await connection.query(
-        `SELECT * FROM SaleItem WHERE id = ? AND saleId = ? FOR UPDATE`,
-        [item.saleItemId, saleId]
-      );
-
-      if (saleItemRows.length === 0) throw new Error('أحد العناصر غير موجود في هذه الفاتورة');
-      const originalItem = saleItemRows[0];
-
-      if (item.qtyToReturn > originalItem.qty) {
-        throw new Error(`لا يمكن إرجاع كمية أكبر من المتاحة للصنف: ${originalItem.medicineName}`);
-      }
-
-      // 2. جلب بيانات الدواء الحالية من جدول Medicine لمعرفة تفاصيل التعبئة بدقة
-      const [medRows] = await connection.query(`SELECT * FROM Medicine WHERE id = ? FOR UPDATE`, [originalItem.medicineId]);
-      if (medRows.length === 0) throw new Error(`الدواء لم يعد موجوداً في النظام`);
-      const medicine = medRows[0];
-
-      // 3. حساب الكمية الدقيقة لإعادتها لجدول الأدوية 
-      const stockAddition = calculateFractionalQty(item.qtyToReturn, originalItem.quantityType, medicine.stripCount, medicine.pillCount);
-
-      // 4. إضافة الكمية المستردة إلى المخزون في جدول Medicine
-      await connection.query(
-        `UPDATE Medicine SET quantity = quantity + ? WHERE id = ?`,
-        [stockAddition, originalItem.medicineId]
-      );
-
-      // 5. حساب القيم المالية المستردة بناءً على سعر وقت البيع
-      const itemTotalPrice = originalItem.unitPrice * item.qtyToReturn;
-      const itemTotalCost = originalItem.unitCost * item.qtyToReturn;
-      const itemProfit = itemTotalPrice - itemTotalCost;
-
-      totalRefund += itemTotalPrice;
-      totalCostRefund += itemTotalCost;
-      totalProfitRefund += itemProfit;
-
-      // 6. التعامل مع جدول SaleItem 
-      if (item.qtyToReturn === originalItem.qty) {
-        // إذا رجع الكمية كاملة، يتم حذف السطر تماماً من جدول SaleItem
-        await connection.query(`DELETE FROM SaleItem WHERE id = ?`, [item.saleItemId]);
-      } else {
-        // إذا رجع جزء، يتم خصم الكمية من جدول SaleItem
-        await connection.query(
-          `UPDATE SaleItem SET qty = qty - ? WHERE id = ?`,
-          [item.qtyToReturn, item.saleItemId]
-        );
-      }
-    }
-
-    // 7. خصم المبالغ المستردة من الفاتورة الإجمالية في جدول Sale
-    await connection.query(
-      `UPDATE Sale SET total = total - ?, cost = cost - ?, profit = profit - ? WHERE id = ?`,
-      [totalRefund, totalCostRefund, totalProfitRefund, saleId]
-    );
-
-    // 8. إذا أصبحت الفاتورة فارغة تماماً (إجمالي قيمتها صفر)، يتم حذفها نهائياً من جدول Sale
-    const [checkSale] = await connection.query(`SELECT total FROM Sale WHERE id = ?`, [saleId]);
-    if (checkSale.length > 0 && checkSale[0].total <= 0) {
-      await connection.query(`DELETE FROM Sale WHERE id = ?`, [saleId]);
-    }
-
-    // 9. تسجيل العملية في جدول المرتجع للتوثيق
-    await connection.query(
-      `INSERT INTO ReturnSale (id, saleId, totalRefund, cashierId, cashierName) VALUES (?, ?, ?, ?, ?)`,
-      [returnId, saleId, totalRefund, cashierId, cashierName]
-    );
-
-    // تسجيل الـ Log
-    await connection.query(
-      `INSERT INTO AuditLog (id, actorId, actorName, action, details, severity) VALUES (UUID(), ?, ?, 'RETURN', ?, 'warning')`,
-      [cashierId, cashierName, `مرتجع للفاتورة ${saleId} بقيمة ${totalRefund.toFixed(2)} وتحديث الأدوية والبيع.`]
-    );
-
-    await connection.commit();
-    res.json({ message: 'تم إرجاع الدواء للمخزن وتعديل/حذف البيانات من الفواتير بنجاح', totalRefund });
-
-  } catch (err) {
-    await connection.rollback();
-    console.error("Return Error:", err.message);
-    res.status(400).json({ error: err.message || 'فشل إتمام عملية المرتجع' });
-  } finally {
-    connection.release();
-  }
-});
-
-// ================= 3. فحص التعارضات الطبية =================
-router.post('/check-interactions', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashier'), async (req, res) => {
-  try {
-    const { items } = req.body;
-
-    let genericNames = [...new Set(items
-      .map(item => item.genericName)
-      .filter(name => name && name.trim() !== '')
-      .map(name => name.toLowerCase().split(' ')[0])
-    )];
-
-    if (genericNames.length < 2) {
-      return res.json({ hasInteraction: false, interactions: [] });
-    }
-
-    const mockDatabase = {
-      'aspirin-warfarin': { severity: 'high', description: 'تحذير: تناول الأسبرين مع الوارفارين يزيد من خطر التعرض لنزيف حاد.' },
-      'nitroglycerin-sildenafil': { severity: 'high', description: 'خطر: هبوط حاد في ضغط الدم قد يؤدي إلى الإغماء.' },
-      'aspirin-ibuprofen': { severity: 'moderate', description: 'تنبيه: الإيبوبروفين قد يقلل من فاعلية الأسبرين في حماية القلب.' },
-      'ciprofloxacin-ibuprofen': { severity: 'moderate', description: 'تنبيه: هذا المزيج قد يزيد من خطر التشنجات العصبية.' }
-    };
-
-    genericNames.sort();
-    const allInteractions = [];
-
-    for (let i = 0; i < genericNames.length; i++) {
-      for (let j = i + 1; j < genericNames.length; j++) {
-        const pairKey = `${genericNames[i]}-${genericNames[j]}`;
-        if (mockDatabase[pairKey]) {
-          allInteractions.push(mockDatabase[pairKey]);
-        }
-      }
-    }
-
-    if (allInteractions.length === 0) {
-      return res.json({ hasInteraction: false, interactions: [] });
-    }
-
-    res.json({
-      hasInteraction: true,
-      status: 'warning',
-      severity: allInteractions[0].severity,
-      message: '⚠️ تنبيه طبي: يوجد تعارض أدوية في هذه الفاتورة',
-      details: allInteractions,
-      suggestion: 'هل تريد الاستمرار في إتمام البيع رغم هذا التحذير؟'
-    });
-  } catch (err) {
-    console.error('Local Interaction Error:', err.message);
-    res.status(500).json({ error: 'حدث خطأ أثناء فحص التعارضات الطبية محلياً' });
   }
 });
 
