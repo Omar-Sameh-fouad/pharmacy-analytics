@@ -52,8 +52,9 @@ router.post('/check-out', verifyToken, authorizeRoles('admin', 'pharmacist', 'ca
       return res.status(400).json({ error: 'الرجاء إرسال الـ username' });
     }
 
+    // 1. جلب بيانات الموظف متضمنة ساعات العمل اليومية (dailyHours)
     const [user] = await pool.query(
-      'SELECT id, username FROM User WHERE username = ? AND active = 1',
+      'SELECT id, username, dailyHours FROM User WHERE username = ? AND active = 1',
       [username]
     );
 
@@ -70,8 +71,9 @@ router.post('/check-out', verifyToken, authorizeRoles('admin', 'pharmacist', 'ca
       return res.status(400).json({ error: 'تم تسجيل انصراف هذا الموظف مسبقاً' });
     }
 
+    // 2. جلب وقت الحضور (timestamp) لحساب الساعات
     const [checkIn] = await pool.query(
-      `SELECT id FROM Attendance WHERE userId = ? AND actionType = 'check-in' AND DATE(timestamp) = CURDATE()`,
+      `SELECT id, timestamp FROM Attendance WHERE userId = ? AND actionType = 'check-in' AND DATE(timestamp) = CURDATE()`,
       [user[0].id]
     );
 
@@ -79,6 +81,35 @@ router.post('/check-out', verifyToken, authorizeRoles('admin', 'pharmacist', 'ca
       return res.status(400).json({ error: 'لم يتم تسجيل حضور هذا الموظف لهذا اليوم بعد' });
     }
 
+    // 3. حساب فرق الوقت والتأكد من استكمال الساعات
+    const checkInTime = new Date(checkIn[0].timestamp);
+    const currentTime = new Date();
+    
+    const workedMs = currentTime - checkInTime; // الفرق بالمللي ثانية
+    const workedHours = workedMs / (1000 * 60 * 60); // تحويل الفرق لساعات
+
+    const requiredHours = user[0].dailyHours || 8; // عدد الساعات المطلوبة للموظف (8 ساعات كافتراضي لو القيمة مش موجودة)
+
+    // التحقق إذا كان الموظف لم يكمل ساعاته
+    if (workedHours < requiredHours) {
+      // حساب الساعات المتبقية بشكل تقريبي (اختياري لعرضه في رسالة الخطأ)
+      const remainingHours = (requiredHours - workedHours).toFixed(2);
+      
+      // يمكنك تعديل طريقة عرض الوقت المتبقي ليكون (ساعات ودقائق) لتجربة مستخدم أفضل
+      const remainingMinutes = Math.ceil((requiredHours - workedHours) * 60);
+      const displayHours = Math.floor(remainingMinutes / 60);
+      const displayMins = remainingMinutes % 60;
+      
+      let timeText = '';
+      if (displayHours > 0) timeText += `${displayHours} ساعة و `;
+      timeText += `${displayMins} دقيقة`;
+
+      return res.status(400).json({ 
+        error: `لا يمكنك الانصراف الآن. يجب إكمال ${requiredHours} ساعات عمل. متبقي لك تقريباً ${timeText}.` 
+      });
+    }
+
+    // 4. تسجيل الانصراف في حالة إكمال الساعات
     await pool.query(
       `INSERT INTO Attendance (id, userId, userName, actionType) VALUES (?, ?, ?, 'check-out')`,
       [uuidv4(), user[0].id, user[0].username]
@@ -90,7 +121,6 @@ router.post('/check-out', verifyToken, authorizeRoles('admin', 'pharmacist', 'ca
     res.status(500).json({ error: 'خطأ في تسجيل الانصراف' });
   }
 });
-
 // ================= REPORT =================
 router.get('/report/:userId', verifyToken, authorizeRoles('admin'), async (req, res) => {
   try {
