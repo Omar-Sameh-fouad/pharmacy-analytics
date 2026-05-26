@@ -5,7 +5,7 @@ const pool = require('../config/db');
 const { verifyToken, authorizeRoles } = require('../middlewares/verifyToken');
 
 // ================= CHECK-IN =================
-router.post('/check-in', verifyToken, authorizeRoles('admin'), async (req, res) => {
+router.post('/check-in', verifyToken, authorizeRoles('admin','pharmacist', 'cashier'), async (req, res) => {
   try {
     const { username } = req.body;
 
@@ -44,7 +44,7 @@ router.post('/check-in', verifyToken, authorizeRoles('admin'), async (req, res) 
 });
 
 // ================= CHECK-OUT =================
-router.post('/check-out', verifyToken, authorizeRoles('admin'), async (req, res) => {
+router.post('/check-out', verifyToken, authorizeRoles('admin', 'pharmacist', 'cashier'), async (req, res) => {
   try {
     const { username } = req.body;
 
