@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pharmacy Analytics</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #0f1117;
+            color: #e0e0e0;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* SIDEBAR */
+        .sidebar {
+            width: 240px;
+            background: #1a1d27;
+            padding: 30px 0;
+            position: fixed;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #2a2d3e;
+        }
+
+        .logo {
+            padding: 0 25px 30px;
+            border-bottom: 1px solid #2a2d3e;
+        }
+
+        .logo h1 {
+            font-size: 18px;
+            color: #ffffff;
+            font-weight: 700;
+        }
+
+        .logo p {
+            font-size: 11px;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+
+        .nav-items {
+            padding: 20px 0;
+            flex: 1;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 25px;
+            cursor: pointer;
+            color: #6b7280;
+            font-size: 14px;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-item:hover {
+            color: #ffffff;
+            background: #22253a;
+        }
+
+        .nav-item.active {
+            color: #6366f1;
+            background: #22253a;
+            border-left: 3px solid #6366f1;
+        }
+
+        .nav-item .icon { font-size: 18px; }
+
+        /* MAIN CONTENT */
+        .main {
+            margin-left: 240px;
+            flex: 1;
+            padding: 30px;
+        }
+
+        .page { display: none; }
+        .page.active { display: block; }
+
+        .page-header {
+            margin-bottom: 25px;
+        }
+
+        .page-header h2 {
+            font-size: 24px;
+            color: #ffffff;
+            font-weight: 700;
+        }
+
+        .page-header p {
+            color: #6b7280;
+            font-size: 13px;
+            margin-top: 4px;
+        }
+
+        /* KPI CARDS */
+        .kpi-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .kpi {
+            background: #1a1d27;
+            border: 1px solid #2a2d3e;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .kpi .label {
+            font-size: 12px;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .kpi .number {
+            font-size: 26px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-top: 8px;
+        }
+
+        .kpi .accent { color: #6366f1; }
+
+        /* CHARTS */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .chart-card {
+            background: #1a1d27;
+            border: 1px solid #2a2d3e;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .chart-card.full { grid-column: 1 / -1; }
+
+        .chart-card h3 {
+            font-size: 13px;
+            color: #9ca3af;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* LOADING */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 200px;
+            color: #6b7280;
+            font-size: 14px;
+            gap: 10px;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #2a2d3e;
+            border-top-color: #6366f1;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* STATUS BAR */
+        .status-bar {
+            padding: 15px 25px;
+            margin-top: auto;
+            border-top: 1px solid #2a2d3e;
+            font-size: 11px;
+            color: #6b7280;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            background: #22c55e;
+            border-radius: 50%;
+        }
+    </style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+    <div class="logo">
+        <h1>🏥 PharmAnalytics</h1>
+        <p>Intelligence Dashboard</p>
+    </div>
+    <div class="nav-items">
+        <div class="nav-item active" onclick="showPage('employee', this)">
+            <span class="icon">👨‍💼</span> Employee
+        </div>
+        <div class="nav-item" onclick="showPage('inventory', this)">
+            <span class="icon">💊</span> Inventory
+        </div>
+        <div class="nav-item" onclick="showPage('sales', this)">
+            <span class="icon">📈</span> Sales Trends
+        </div>
+        <div class="nav-item" onclick="showPage('basket', this)">
+            <span class="icon">🛒</span> Market Basket
+        </div>
+    </div>
+    <div class="status-bar">
+        <div class="status-dot"></div> Connected to Railway DB
+    </div>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="main">
+
+    <!-- EMPLOYEE PAGE -->
+    <div id="employee" class="page active">
+        <div class="page-header">
+            <h2>Employee Performance</h2>
+            <p>Cashier analytics and activity heatmap</p>
+        </div>
+        <div class="kpi-row">
+            <div class="kpi">
+                <div class="label">Total Cashiers</div>
+                <div class="number accent" id="emp-count">-</div>
+            </div>
+            <div class="kpi">
+                <div class="label">Top Performer</div>
+                <div class="number" id="top-cashier" style="font-size:16px; margin-top:10px">-</div>
+            </div>
+            <div class="kpi">
+                <div class="label">Total Transactions</div>
+                <div class="number accent" id="total-transactions">-</div>
+            </div>
+            <div class="kpi">
+                <div class="label">Total Revenue</div>
+                <div class="number accent" id="total-revenue">-</div>
+            </div>
+        </div>
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>Revenue by Cashier</h3>
+                <div id="chart-cashier-revenue"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+            </div>
+            <div class="chart-card">
+                <h3>Transactions by Cashier</h3>
+                <div id="chart-cashier-transactions"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+            </div>
+            <div class="chart-card full">
+                <h3>Activity Heatmap — Busiest Hours</h3>
+                <div id="chart-heatmap"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- INVENTORY PAGE -->
+    <div id="inventory" class="page">
+        <div class="page-header">
+            <h2>Inventory ABC Analysis</h2>
+            <p>Medicine performance and revenue classification</p>
+        </div>
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>ABC Category Distribution</h3>
+                <div id="chart-abc-pie"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+            </div>
+            <div class="chart-card">
+                <h3>Top 10 Medicines by Revenue</h3>
+                <div id="chart-top-medicines"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+            </div>
+            <div class="chart-card full">
+                <h3>Revenue vs Profit — All Medicines</h3>
+                <div id="chart-medicine-scatter"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SALES PAGE -->
+    <div id="sales" class="page">
+        <div class="page-header">
+            <h2>Sales Trends</h2>
+            <p>Daily revenue, weekly patterns and payment methods</p>
+        </div>
+        <div class="charts-grid">
+            <div class="chart-card full">
+                <h3>Daily Revenue Over Time</h3>
+                <div id="chart-daily-revenue"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+            </div>
+            <div class="chart-card">
+                <h3>Revenue by Day of Week</h3>
+                <div id="chart-day-of-week"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+            </div>
+            <div class="chart-card">
+                <h3>Payment Methods</h3>
+                <div id="chart-payment"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BASKET PAGE -->
+    <div id="basket" class="page">
+        <div class="page-header">
+            <h2>Market Basket Analysis</h2>
+            <p>Medicines frequently purchased together</p>
+        </div>
+        <div class="charts-grid">
+            <div class="chart-card full">
+                <h3>Top 20 Medicine Pairs</h3>
+                <div id="chart-basket"><div class="loading"><div class="spinner"></div> Loading...</div></div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    const darkLayout = {
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: '#9ca3af', size: 11 },
+        margin: { t: 10, r: 10, b: 40, l: 50 },
+        xaxis: { gridcolor: '#2a2d3e', linecolor: '#2a2d3e' },
+        yaxis: { gridcolor: '#2a2d3e', linecolor: '#2a2d3e' }
+    };
+
+    const colors = ['#6366f1','#8b5cf6','#a78bfa','#c4b5fd','#818cf8'];
+
+    function showPage(name, el) {
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        document.getElementById(name).classList.add('active');
+        el.classList.add('active');
+    }
+
+    window.onload = function() {
+        loadEmployee();
+        loadInventory();
+        loadSales();
+        loadBasket();
+    }
+
+    function loadEmployee() {
+        fetch('/employee')
+        .then(r => r.json())
+        .then(data => {
+            const cashiers = {};
+            data.forEach(row => {
+                if (!cashiers[row.cashierName]) {
+                    cashiers[row.cashierName] = { revenue: 0, sales: 0, hours: {} };
+                }
+                cashiers[row.cashierName].revenue += row.total_revenue;
+                cashiers[row.cashierName].sales += row.total_sales;
+                cashiers[row.cashierName].hours[row.hour] =
+                    (cashiers[row.cashierName].hours[row.hour] || 0) + row.total_sales;
+            });
+
+            const names = Object.keys(cashiers);
+            const revenues = names.map(n => parseFloat(cashiers[n].revenue.toFixed(2)));
+            const sales = names.map(n => cashiers[n].sales);
+            const topIdx = revenues.indexOf(Math.max(...revenues));
+
+            document.getElementById('emp-count').textContent = names.length;
+            document.getElementById('top-cashier').textContent = names[topIdx] || '-';
+            document.getElementById('total-transactions').textContent = sales.reduce((a,b)=>a+b,0);
+            document.getElementById('total-revenue').textContent = '$' + revenues.reduce((a,b)=>a+b,0).toFixed(2);
+
+            Plotly.newPlot('chart-cashier-revenue', [{
+                type: 'bar', x: names, y: revenues,
+                marker: { color: '#6366f1' }
+            }], {...darkLayout});
+
+            Plotly.newPlot('chart-cashier-transactions', [{
+                type: 'bar', x: names, y: sales,
+                marker: { color: '#8b5cf6' }
+            }], {...darkLayout});
+
+            const hours = Array.from({length: 24}, (_, i) => i);
+            const z = names.map(n => hours.map(h => cashiers[n].hours[h] || 0));
+            Plotly.newPlot('chart-heatmap', [{
+                type: 'heatmap', z, y: names,
+                x: hours.map(h => h + ':00'),
+                colorscale: [
+                    [0, '#1a1d27'], [0.5, '#4f46e5'], [1, '#a78bfa']
+                ]
+            }], {...darkLayout, margin: {t:10, r:10, b:40, l:120}});
+        });
+    }
+
+    function loadInventory() {
+        fetch('/inventory')
+        .then(r => r.json())
+        .then(data => {
+            const top10 = data.slice(0, 10);
+
+            const abcCount = {A: 0, B: 0, C: 0};
+            data.forEach(d => { if(d.category) abcCount[d.category]++; });
+
+            Plotly.newPlot('chart-abc-pie', [{
+                type: 'pie',
+                labels: ['A — High Value', 'B — Medium', 'C — Low Value'],
+                values: [abcCount.A, abcCount.B, abcCount.C],
+                marker: { colors: ['#6366f1', '#8b5cf6', '#2a2d3e'] },
+                textfont: { color: '#ffffff' }
+            }], {...darkLayout, margin: {t:10, r:10, b:10, l:10}});
+
+            Plotly.newPlot('chart-top-medicines', [{
+                type: 'bar',
+                x: top10.map(d => parseFloat(d.total_revenue).toFixed(2)),
+                y: top10.map(d => d.name),
+                orientation: 'h',
+                marker: { color: '#6366f1' }
+            }], {...darkLayout, margin: {t:10, r:10, b:40, l:150}});
+
+            Plotly.newPlot('chart-medicine-scatter', [{
+                type: 'scatter', mode: 'markers',
+                x: data.map(d => d.total_revenue),
+                y: data.map(d => d.total_profit),
+                text: data.map(d => d.name),
+                marker: { size: 10, color: '#6366f1', opacity: 0.7 }
+            }], {...darkLayout,
+                xaxis: { ...darkLayout.xaxis, title: 'Revenue' },
+                yaxis: { ...darkLayout.yaxis, title: 'Profit' }
+            });
+        });
+    }
+
+    function loadSales() {
+        fetch('/sales')
+        .then(r => r.json())
+        .then(data => {
+            const dates = [...new Set(data.map(d => d.date))];
+            const dailyRevenue = dates.map(date =>
+                data.filter(d => d.date === date).reduce((s,d) => s + d.total_revenue, 0)
+            );
+
+            Plotly.newPlot('chart-daily-revenue', [{
+                type: 'scatter', mode: 'lines+markers',
+                x: dates, y: dailyRevenue,
+                line: { color: '#6366f1', width: 3 },
+                marker: { size: 5, color: '#a78bfa' },
+                fill: 'tozeroy',
+                fillcolor: 'rgba(99,102,241,0.1)'
+            }], {...darkLayout});
+
+            const days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+            Plotly.newPlot('chart-day-of-week', [{
+                type: 'bar',
+                x: days,
+                y: days.map(day => data.filter(d => d.day_name === day).reduce((s,d) => s + d.total_revenue, 0)),
+                marker: { color: '#8b5cf6' }
+            }], {...darkLayout});
+
+            const payments = {};
+            data.forEach(d => {
+                payments[d.paymentMethod] = (payments[d.paymentMethod] || 0) + d.total_revenue;
+            });
+            Plotly.newPlot('chart-payment', [{
+                type: 'pie',
+                labels: Object.keys(payments),
+                values: Object.values(payments),
+                marker: { colors: ['#6366f1', '#8b5cf6', '#a78bfa'] },
+                textfont: { color: '#ffffff' }
+            }], {...darkLayout, margin: {t:10, r:10, b:10, l:10}});
+        });
+    }
+
+    function loadBasket() {
+        fetch('/basket')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.length) {
+                document.getElementById('chart-basket').innerHTML = 
+                    '<div class="loading">Not enough transaction data yet</div>';
+                return;
+            }
+            Plotly.newPlot('chart-basket', [{
+                type: 'bar',
+                x: data.map(d => d.times_bought_together),
+                y: data.map(d => d.medicine1 + ' + ' + d.medicine2),
+                orientation: 'h',
+                marker: { color: '#6366f1' }
+            }], {...darkLayout, margin: {t:10, r:10, b:40, l:300}});
+        });
+    }
+</script>
+</body>
+</html>
